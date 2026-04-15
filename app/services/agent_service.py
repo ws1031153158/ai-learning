@@ -324,8 +324,16 @@ class AgentService:
         """CrewAI 多Agent分析"""
         # ── 禁用 crewai 交互提示 ──────────────────────
         import os
+        from crewai import LLM
         os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
         os.environ["OTEL_SDK_DISABLED"] = "true"
+
+        sllm = LLM(
+        model="openai/deepseek-chat",
+        api_key=DEEPSEEK_API_KEY,
+        base_url=DEEPSEEK_BASE_URL
+        )
+
 
         data_collector = Agent(
             role="股票数据收集师",
@@ -333,8 +341,9 @@ class AgentService:
             backstory="专业金融数据分析师。",
             tools=[tool_get_price, tool_get_news, tool_get_fund_flow],
             verbose=False,
-            allow_delegation=False,
-            max_iter=3
+            allow_delegation=False, 
+            max_iter=3,
+            llm=sllm
         )
         technical_analyst = Agent(
             role="技术分析师",
@@ -343,7 +352,8 @@ class AgentService:
             tools=[tool_get_price, tool_get_fund_flow],
             verbose=False,
             allow_delegation=False,
-            max_iter=3
+            max_iter=3,
+            llm=sllm
         )
         fundamental_analyst = Agent(
             role="基本面分析师",
@@ -352,7 +362,8 @@ class AgentService:
             tools=[tool_get_financial, tool_get_news],
             verbose=False,
             allow_delegation=False,
-            max_iter=3
+            max_iter=3,
+            llm=sllm
         )
         risk_assessor = Agent(
             role="风险评估师",
@@ -361,7 +372,8 @@ class AgentService:
             tools=[tool_get_news, tool_get_financial],
             verbose=False,
             allow_delegation=False,
-            max_iter=3
+            max_iter=3,
+            llm=sllm
         )
         chief_analyst = Agent(
             role="首席投资分析师",
@@ -370,7 +382,8 @@ class AgentService:
             tools=[tool_calculate_position] if total_assets else [],
             verbose=False,
             allow_delegation=False,
-            max_iter=3
+            max_iter=3,
+            llm=sllm
         )
 
         t_collect = Task(
