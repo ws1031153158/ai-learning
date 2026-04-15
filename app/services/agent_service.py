@@ -322,6 +322,11 @@ class AgentService:
         total_assets: float = None
     ) -> str:
         """CrewAI 多Agent分析"""
+        # ── 禁用 crewai 交互提示 ──────────────────────
+        import os
+        os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
+        os.environ["OTEL_SDK_DISABLED"] = "true"
+
         data_collector = Agent(
             role="股票数据收集师",
             goal=f"收集 {stock_code} 的完整数据",
@@ -418,6 +423,7 @@ class AgentService:
             tasks=[t_collect, t_tech, t_fund, t_risk, t_report],
             process=Process.sequential,
             verbose=False
+            output_log_file=False
         )
         return str(crew.kickoff())
 
