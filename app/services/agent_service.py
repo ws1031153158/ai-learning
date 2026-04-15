@@ -422,7 +422,7 @@ class AgentService:
             ],
             tasks=[t_collect, t_tech, t_fund, t_risk, t_report],
             process=Process.sequential,
-            verbose=False
+            verbose=False,
             output_log_file=False
         )
         return str(crew.kickoff())
