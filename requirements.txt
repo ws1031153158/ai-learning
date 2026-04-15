@@ -10,7 +10,6 @@ langchain-huggingface
 sentence-transformers
 chromadb
 openai
-akshare
 pandas
 apscheduler
 crewai

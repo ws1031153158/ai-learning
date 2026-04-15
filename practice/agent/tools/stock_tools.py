@@ -1,47 +1,93 @@
-# agent/tools/stock_tools.py
+# practice/agent/tools/stock_tools.py
 import sys
 sys.path.append(".")
 
-import akshare as ak
-from datetime import datetime, timedelta
+import requests
 import json
+from datetime import datetime, timedelta
+
+
+# ── 新浪财经接口 ──────────────────────────────────────
+
+def _get_sina_realtime(stock_code: str) -> dict:
+    """
+    新浪财经实时行情
+    服务器可以正常访问
+    """
+    # 判断市场前缀
+    if stock_code.startswith("6"):
+        symbol = f"sh{stock_code}"
+    elif stock_code.startswith("0") or stock_code.startswith("3"):
+        symbol = f"sz{stock_code}"
+    else:
+        symbol = f"sh{stock_code}"
+
+    url = f"http://hq.sinajs.cn/list={symbol}"
+    headers = {
+        "Referer": "https://finance.sina.com.cn",
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "gbk"
+        content = resp.text
+
+        # 解析新浪返回格式
+        # var hq_str_sh600519="贵州茅台,1750.00,..."
+        data_str = content.split('"')[1]
+        if not data_str:
+            return {}
+
+        fields = data_str.split(",")
+        if len(fields) < 32:
+            return {}
+
+        return {
+            "name": fields[0],
+            "open": float(fields[1]),
+            "prev_close": float(fields[2]),
+            "price": float(fields[3]),
+            "high": float(fields[4]),
+            "low": float(fields[5]),
+            "volume": float(fields[8]),
+            "amount": float(fields[9]),
+            "date": fields[30],
+            "time": fields[31]
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def get_stock_price(stock_code: str) -> str:
     """
     获取股票最新价格和涨跌情况
-    
-    Args:
-        stock_code: 股票代码，如 600519
-    Returns:
-        包含价格信息的字符串
     """
     try:
-        today = datetime.now().strftime("%Y%m%d")
-        yesterday = (
-            datetime.now() - timedelta(days=5)
-        ).strftime("%Y%m%d")
+        data = _get_sina_realtime(stock_code)
 
-        df = ak.stock_zh_a_hist(
-            symbol=stock_code,
-            period="daily",
-            start_date=yesterday,
-            end_date=today,
-            adjust="qfq"
-        )
+        if "error" in data or not data:
+            return f"获取价格失败：{data.get('error', '数据为空')}"
 
-        if df.empty:
-            return f"未找到股票 {stock_code} 的数据"
+        price = data["price"]
+        prev_close = data["prev_close"]
+        change_amount = round(price - prev_close, 2)
+        change_pct = round(
+            (price - prev_close) / prev_close * 100, 2
+        ) if prev_close > 0 else 0
 
-        latest = df.iloc[-1]
-        return json.dumps({
+        result = {
             "stock_code": stock_code,
-            "price": latest['收盘'],
-            "change_pct": latest['涨跌幅'],
-            "change_amount": latest['涨跌额'],
-            "volume": latest['成交量'],
-            "date": str(latest['日期'])
-        }, ensure_ascii=False)
+            "name": data["name"],
+            "price": price,
+            "change_pct": change_pct,
+            "change_amount": change_amount,
+            "high": data["high"],
+            "low": data["low"],
+            "volume": data["volume"],
+            "date": data["date"]
+        }
+        return json.dumps(result, ensure_ascii=False)
 
     except Exception as e:
         return f"获取价格失败：{e}"
@@ -50,24 +96,45 @@ def get_stock_price(stock_code: str) -> str:
 def get_stock_news(stock_code: str, limit: int = 5) -> str:
     """
     获取股票最新新闻
-
-    Args:
-        stock_code: 股票代码，如 600519
-        limit: 返回新闻数量
-    Returns:
-        新闻列表字符串
+    东方财富新闻接口服务器可以正常访问
     """
     try:
-        df = ak.stock_news_em(symbol=stock_code)
-        df = df.head(limit)
+        url = "https://np-listapi.eastmoney.com/comm/wap/getListInfo"
+        params = {
+            "cb": "callback",
+            "client": "wap",
+            "type": 1,
+            "mTypeAndCode": f"0,{stock_code}",
+            "pageSize": limit,
+            "pageIndex": 1,
+            "callback": "cb"
+        }
+        headers = {"User-Agent": "Mozilla/5.0"}
+        resp = requests.get(
+            url, params=params,
+            headers=headers, timeout=10
+        )
+
+        # 解析 jsonp
+        text = resp.text
+        start = text.index("(") + 1
+        end = text.rindex(")")
+        data = json.loads(text[start:end])
 
         news_list = []
-        for _, row in df.iterrows():
+        items = (
+            data.get("data", {})
+            .get("list", [])
+        )
+        for item in items[:limit]:
             news_list.append({
-                "title": row.get('新闻标题', ''),
-                "time": str(row.get('发布时间', '')),
-                "summary": row.get('新闻内容', '')[:200]
+                "title": item.get("title", ""),
+                "time": item.get("datetime", ""),
+                "summary": item.get("digest", "")[:200]
             })
+
+        if not news_list:
+            return f"暂无 {stock_code} 相关新闻"
 
         return json.dumps(news_list, ensure_ascii=False)
 
@@ -77,31 +144,53 @@ def get_stock_news(stock_code: str, limit: int = 5) -> str:
 
 def get_fund_flow(stock_code: str) -> str:
     """
-    获取股票主力资金流向
-
-    Args:
-        stock_code: 股票代码，如 600519
-    Returns:
-        资金流向数据字符串
+    获取主力资金流向
+    使用东方财富资金流向接口
     """
     try:
-        market = "sh" if stock_code.startswith("6") else "sz"
-        df = ak.stock_individual_fund_flow(
-            stock=stock_code,
-            market=market
+        if stock_code.startswith("6"):
+            market = 1  # 沪市
+        else:
+            market = 0  # 深市
+
+        url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+        params = {
+            "lmt": 5,
+            "klt": 101,
+            "secid": f"{market}.{stock_code}",
+            "fields1": "f1,f2,f3,f7",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63",
+            "ut": "b2884a393a59ad64002292a3e90d46a5"
+        }
+        headers = {
+            "Referer": "https://data.eastmoney.com",
+            "User-Agent": "Mozilla/5.0"
+        }
+
+        resp = requests.get(
+            url, params=params,
+            headers=headers, timeout=10
         )
-        df = df.tail(3)
+        data = resp.json()
+
+        klines = (
+            data.get("data", {})
+            .get("klines", [])
+        )
+        if not klines:
+            return f"暂无 {stock_code} 资金流向数据"
 
         flow_list = []
-        for _, row in df.iterrows():
-            main_flow = row.get('主力净流入-净额', 0)
+        for kline in klines[-5:]:
+            fields = kline.split(",")
+            if len(fields) < 7:
+                continue
+            main_flow = float(fields[1]) if fields[1] != "-" else 0
             flow_list.append({
-                "date": str(row.get('日期', '')),
-                "close": row.get('收盘价', 0),
-                "change_pct": row.get('涨跌幅', 0),
+                "date": fields[0],
                 "main_flow": round(main_flow / 1e8, 2),
-                "main_flow_ratio": row.get('主力净流入-净占比', 0),
-                "status": "流入" if main_flow > 0 else "流出"
+                "status": "流入" if main_flow > 0 else "流出",
+                "main_flow_ratio": fields[6]
             })
 
         return json.dumps(flow_list, ensure_ascii=False)
@@ -112,33 +201,46 @@ def get_fund_flow(stock_code: str) -> str:
 
 def get_financial_indicator(stock_code: str) -> str:
     """
-    获取股票核心财务指标
-
-    Args:
-        stock_code: 股票代码，如 600519
-    Returns:
-        财务指标字符串
+    获取核心财务指标
+    使用东方财富财务接口
     """
     try:
-        df = ak.stock_financial_analysis_indicator(
-            symbol=stock_code,
-            start_year="2024"
+        if stock_code.startswith("6"):
+            market = "SH"
+        else:
+            market = "SZ"
+
+        url = "https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew"
+        params = {
+            "type": 1,
+            "code": f"{market}{stock_code}"
+        }
+        headers = {
+            "Referer": "https://emweb.securities.eastmoney.com",
+            "User-Agent": "Mozilla/5.0"
+        }
+
+        resp = requests.get(
+            url, params=params,
+            headers=headers, timeout=10
         )
+        data = resp.json()
 
-        if df.empty:
-            return f"未找到 {stock_code} 的财务数据"
+        items = data.get("data", [])
+        if not items:
+            return f"暂无 {stock_code} 财务数据"
 
-        latest = df.iloc[0]
+        latest = items[0]
         result = {
             "stock_code": stock_code,
-            "report_date": str(latest.get('日期', 'N/A')),
-            "eps": latest.get('摊薄每股收益(元)', 'N/A'),
-            "roe": latest.get('净资产收益率(%)', 'N/A'),
-            "roa": latest.get('总资产净利润率(%)', 'N/A'),
-            "profit_margin": latest.get('销售净利率(%)', 'N/A'),
-            "revenue_growth": latest.get('主营业务收入增长率(%)', 'N/A'),
-            "net_profit_growth": latest.get('净利润增长率(%)', 'N/A'),
-            "debt_ratio": latest.get('资产负债率(%)', 'N/A'),
+            "report_date": latest.get("REPORTDATE", "N/A"),
+            "eps": latest.get("EPSBASIC", "N/A"),
+            "roe": latest.get("ROEJQ", "N/A"),
+            "roa": latest.get("ZZCJLL", "N/A"),
+            "profit_margin": latest.get("XSMLL", "N/A"),
+            "revenue_growth": latest.get("YYZSRGRATE", "N/A"),
+            "net_profit_growth": latest.get("GSJLRGRATE", "N/A"),
+            "debt_ratio": latest.get("ZCFZL", "N/A"),
         }
 
         return json.dumps(result, ensure_ascii=False)
@@ -154,13 +256,7 @@ def calculate_position(
 ) -> str:
     """
     根据风险等级计算建议仓位
-
-    Args:
-        stock_code: 股票代码
-        total_assets: 总资产（元）
-        risk_level: 风险等级 low/medium/high
-    Returns:
-        仓位建议字符串
+    纯计算，不需要网络请求
     """
     risk_map = {
         "low": 0.1,
@@ -175,7 +271,7 @@ def calculate_position(
         "stock_code": stock_code,
         "total_assets": total_assets,
         "risk_level": risk_level,
-        "suggested_ratio": f"{ratio*100}%",
+        "suggested_ratio": f"{ratio * 100}%",
         "suggested_amount": suggested_amount,
         "note": "仅供参考，不构成投资建议"
     }

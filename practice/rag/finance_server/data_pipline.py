@@ -1,73 +1,77 @@
-# rag/finance_server/data_pipeline.py
+# app/services/data_pipeline.py
 import sys
 sys.path.append(".")
 
-import akshare as ak
+import requests
+import json
 from datetime import datetime, timedelta
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from practice.rag.finance_server.config import *
+from app.config import *
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=300,
     chunk_overlap=30
 )
 
-today = datetime.now().strftime("%Y%m%d")
-thirty_days_ago = (
-    datetime.now() - timedelta(days=HISTORY_DAYS)
-).strftime("%Y%m%d")
+
+# ── 公共请求头 ────────────────────────────────────────
+
+SINA_HEADERS = {
+    "Referer": "https://finance.sina.com.cn",
+    "User-Agent": "Mozilla/5.0"
+}
+
+EM_HEADERS = {
+    "Referer": "https://data.eastmoney.com",
+    "User-Agent": "Mozilla/5.0"
+}
 
 
-# ============================================================
-# 数据获取
-# ============================================================
+# ── 数据获取 ──────────────────────────────────────────
 
 def fetch_price_analysis(stock_code: str) -> list[Document]:
     docs = []
     try:
-        df = ak.stock_zh_a_hist(
-            symbol=stock_code,
-            period="daily",
-            start_date=thirty_days_ago,
-            end_date=today,
-            adjust="qfq"
+        # 新浪实时行情
+        symbol = (
+            f"sh{stock_code}"
+            if stock_code.startswith("6")
+            else f"sz{stock_code}"
         )
-        if df.empty:
+        url = f"http://hq.sinajs.cn/list={symbol}"
+        resp = requests.get(
+            url, headers=SINA_HEADERS, timeout=10
+        )
+        resp.encoding = "gbk"
+        data_str = resp.text.split('"')[1]
+        fields = data_str.split(",")
+
+        if len(fields) < 32:
             return docs
 
-        latest = df.iloc[-1]
-        ma5 = df['收盘'].tail(5).mean()
-        ma10 = df['收盘'].tail(10).mean()
-        ma20 = df['收盘'].tail(20).mean() if len(df) >= 20 else None
-        month_change = (
-            (latest['收盘'] - df.iloc[0]['收盘'])
-            / df.iloc[0]['收盘'] * 100
-        )
-        avg_volume = df['成交量'].mean()
-        volume_ratio = latest['成交量'] / avg_volume
-        trend = "上涨" if ma5 > ma10 else "下跌"
-        volume_status = (
-            "放量" if volume_ratio > 1.5
-            else "缩量" if volume_ratio < 0.7
-            else "正常"
-        )
+        name = fields[0]
+        price = float(fields[3])
+        prev_close = float(fields[2])
+        high = float(fields[4])
+        low = float(fields[5])
+        volume = float(fields[8])
+        change_pct = round(
+            (price - prev_close) / prev_close * 100, 2
+        ) if prev_close > 0 else 0
+        change_amount = round(price - prev_close, 2)
 
-        text = f"""【{stock_code}行情分析】
+        text = f"""【{stock_code} {name} 行情分析】
 更新时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}
-最新收盘价：{latest['收盘']}元
-今日涨跌幅：{latest['涨跌幅']}%
-今日成交量：{latest['成交量']}手（{volume_status}）
-近30日涨跌幅：{month_change:.2f}%
-近30日最高：{df['最高'].max()}元
-近30日最低：{df['最低'].min()}元
-5日均线：{ma5:.2f}元
-10日均线：{ma10:.2f}元
-20日均线：{f"{ma20:.2f}元" if ma20 else "数据不足"}
-短期趋势：{trend}
-最近5日收盘：{df['收盘'].tail(5).tolist()}"""
+最新价：{price}元
+涨跌幅：{change_pct}%
+涨跌额：{change_amount}元
+今日最高：{high}元
+今日最低：{low}元
+成交量：{volume}手
+昨收：{prev_close}元"""
 
         docs.append(Document(
             page_content=text,
@@ -77,6 +81,8 @@ def fetch_price_analysis(stock_code: str) -> list[Document]:
                 "update_time": datetime.now().strftime("%Y-%m-%d %H:%M")
             }
         ))
+        print(f"  ✅ 行情数据获取成功")
+
     except Exception as e:
         print(f"  ❌ 行情数据失败：{e}")
     return docs
@@ -85,15 +91,30 @@ def fetch_price_analysis(stock_code: str) -> list[Document]:
 def fetch_news(stock_code: str) -> list[Document]:
     docs = []
     try:
-        df = ak.stock_news_em(symbol=stock_code)
-        df = df.head(NEWS_LIMIT)
+        url = "https://np-listapi.eastmoney.com/comm/wap/getListInfo"
+        params = {
+            "cb": "callback",
+            "client": "wap",
+            "type": 1,
+            "mTypeAndCode": f"0,{stock_code}",
+            "pageSize": NEWS_LIMIT,
+            "pageIndex": 1,
+            "callback": "cb"
+        }
+        resp = requests.get(
+            url, params=params,
+            headers=EM_HEADERS, timeout=10
+        )
+        text = resp.text
+        start = text.index("(") + 1
+        end = text.rindex(")")
+        data = json.loads(text[start:end])
 
-        for _, row in df.iterrows():
-            title = row.get('新闻标题', '')
-            content = row.get('新闻内容', '')
-            pub_time = str(row.get('发布时间', ''))
-            if len(content) > 400:
-                content = content[:400] + "..."
+        items = data.get("data", {}).get("list", [])
+        for item in items[:NEWS_LIMIT]:
+            title = item.get("title", "")
+            pub_time = item.get("datetime", "")
+            content = item.get("digest", "")[:400]
 
             docs.append(Document(
                 page_content=f"""【新闻】{title}
@@ -106,6 +127,8 @@ def fetch_news(stock_code: str) -> list[Document]:
                     "update_time": datetime.now().strftime("%Y-%m-%d %H:%M")
                 }
             ))
+        print(f"  ✅ 新闻获取成功，共{len(docs)}条")
+
     except Exception as e:
         print(f"  ❌ 新闻获取失败：{e}")
     return docs
@@ -114,25 +137,38 @@ def fetch_news(stock_code: str) -> list[Document]:
 def fetch_fund_flow(stock_code: str) -> list[Document]:
     docs = []
     try:
-        market = "sh" if stock_code.startswith("6") else "sz"
-        df = ak.stock_individual_fund_flow(
-            stock=stock_code,
-            market=market
+        market = 1 if stock_code.startswith("6") else 0
+        url = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+        params = {
+            "lmt": 5,
+            "klt": 101,
+            "secid": f"{market}.{stock_code}",
+            "fields1": "f1,f2,f3,f7",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63",
+            "ut": "b2884a393a59ad64002292a3e90d46a5"
+        }
+        resp = requests.get(
+            url, params=params,
+            headers=EM_HEADERS, timeout=10
         )
-        df = df.tail(FUND_FLOW_DAYS)
+        data = resp.json()
+        klines = data.get("data", {}).get("klines", [])
+
+        if not klines:
+            return docs
 
         text = f"""【{stock_code}资金流向】
 更新时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}\n"""
 
-        for _, row in df.iterrows():
-            main_flow = row.get('主力净流入-净额', 0)
-            flow_ratio = row.get('主力净流入-净占比', 0)
+        for kline in klines:
+            fields = kline.split(",")
+            if len(fields) < 7:
+                continue
+            main_flow = float(fields[1]) if fields[1] != "-" else 0
             status = "净流入🟢" if main_flow > 0 else "净流出🔴"
-
             text += f"""
-日期：{row.get('日期', '')} | 收盘：{row.get('收盘价', '')}元 | 涨跌：{row.get('涨跌幅', '')}%
-主力：{status} {abs(main_flow/1e8):.2f}亿（占比{flow_ratio}%）
-超大单：{row.get('超大单净流入-净额', 0)/1e8:.2f}亿 | 大单：{row.get('大单净流入-净额', 0)/1e8:.2f}亿"""
+日期：{fields[0]}
+主力：{status} {abs(main_flow / 1e8):.2f}亿（占比{fields[6]}%）"""
 
         docs.append(Document(
             page_content=text,
@@ -142,6 +178,8 @@ def fetch_fund_flow(stock_code: str) -> list[Document]:
                 "update_time": datetime.now().strftime("%Y-%m-%d %H:%M")
             }
         ))
+        print(f"  ✅ 资金流向获取成功")
+
     except Exception as e:
         print(f"  ❌ 资金流向失败：{e}")
     return docs
@@ -150,27 +188,33 @@ def fetch_fund_flow(stock_code: str) -> list[Document]:
 def fetch_financial(stock_code: str) -> list[Document]:
     docs = []
     try:
-        df = ak.stock_financial_analysis_indicator(
-            symbol=stock_code,
-            start_year="2024"
+        market = "SH" if stock_code.startswith("6") else "SZ"
+        url = "https://emweb.securities.eastmoney.com/PC_HSF10/NewFinanceAnalysis/ZYZBAjaxNew"
+        params = {
+            "type": 1,
+            "code": f"{market}{stock_code}"
+        }
+        resp = requests.get(
+            url, params=params,
+            headers=EM_HEADERS, timeout=10
         )
-        if df.empty:
+        data = resp.json()
+        items = data.get("data", [])
+
+        if not items:
             return docs
 
-        latest = df.iloc[0]
+        latest = items[0]
         text = f"""【{stock_code}财务指标】
 更新时间：{datetime.now().strftime("%Y-%m-%d %H:%M")}
-报告期：{latest.get('日期', 'N/A')}
-每股收益EPS：{latest.get('摊薄每股收益(元)', 'N/A')}元
-每股净资产：{latest.get('每股净资产_调整后(元)', 'N/A')}元
-净资产收益率ROE：{latest.get('净资产收益率(%)', 'N/A')}%
-总资产收益率ROA：{latest.get('总资产净利润率(%)', 'N/A')}%
-营业利润率：{latest.get('营业利润率(%)', 'N/A')}%
-销售净利率：{latest.get('销售净利率(%)', 'N/A')}%
-主营收入增长率：{latest.get('主营业务收入增长率(%)', 'N/A')}%
-净利润增长率：{latest.get('净利润增长率(%)', 'N/A')}%
-资产负债率：{latest.get('资产负债率(%)', 'N/A')}%
-流动比率：{latest.get('流动比率', 'N/A')}"""
+报告期：{latest.get("REPORTDATE", "N/A")}
+每股收益EPS：{latest.get("EPSBASIC", "N/A")}元
+净资产收益率ROE：{latest.get("ROEJQ", "N/A")}%
+总资产收益率ROA：{latest.get("ZZCJLL", "N/A")}%
+销售净利率：{latest.get("XSMLL", "N/A")}%
+主营收入增长率：{latest.get("YYZSRGRATE", "N/A")}%
+净利润增长率：{latest.get("GSJLRGRATE", "N/A")}%
+资产负债率：{latest.get("ZCFZL", "N/A")}%"""
 
         docs.append(Document(
             page_content=text,
@@ -180,23 +224,23 @@ def fetch_financial(stock_code: str) -> list[Document]:
                 "update_time": datetime.now().strftime("%Y-%m-%d %H:%M")
             }
         ))
+        print(f"  ✅ 财务指标获取成功")
+
     except Exception as e:
         print(f"  ❌ 财务指标失败：{e}")
     return docs
 
 
-# ============================================================
-# 更新知识库
-# ============================================================
+# ── 更新知识库 ────────────────────────────────────────
 
 def update_knowledge_base(
     stock_codes: list[str],
     embeddings: HuggingFaceEmbeddings
 ) -> int:
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"更新知识库 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"股票：{stock_codes}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     vectorstore = Chroma(
         persist_directory=DB_PATH,
