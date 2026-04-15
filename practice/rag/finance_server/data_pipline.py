@@ -1,4 +1,3 @@
-# app/services/data_pipeline.py
 import sys
 sys.path.append(".")
 
@@ -243,7 +242,7 @@ def update_knowledge_base(
     print(f"{'=' * 50}")
 
     vectorstore = Chroma(
-        persist_directory=DB_PATH,
+        persist_directory=RAG_DB_PATH,
         embedding_function=embeddings
     )
 
