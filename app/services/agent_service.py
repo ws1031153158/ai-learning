@@ -425,7 +425,13 @@ class AgentService:
             verbose=False,
             output_log_file=False
         )
-        return str(crew.kickoff())
+        try:
+            return str(crew.kickoff())
+        except Exception as e:
+            import traceback
+            print(f"❌ CrewAI 分析失败：{e}")
+            print(traceback.format_exc())
+            raise
 
     async def chat_async(
         self,

@@ -96,7 +96,7 @@ def fetch_news(stock_code: str) -> list[Document]:
             "client": "wap",
             "type": 1,
             "mTypeAndCode": f"0,{stock_code}",
-            "pageSize": NEWS_LIMIT,
+            "pageSize": 10,
             "pageIndex": 1,
             "callback": "cb"
         }
@@ -110,7 +110,7 @@ def fetch_news(stock_code: str) -> list[Document]:
         data = json.loads(text[start:end])
 
         items = data.get("data", {}).get("list", [])
-        for item in items[:NEWS_LIMIT]:
+        for item in items[:10]:
             title = item.get("title", "")
             pub_time = item.get("datetime", "")
             content = item.get("digest", "")[:400]
