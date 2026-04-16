@@ -7,23 +7,25 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import uvicorn
 
-from app.routers import rag, agent, data, auth  
-from app.models.database import Base, engine    
-from app.routers import rag, agent, data, auth, watchlist
 from app.config import DEFAULT_WATCH_LIST
 from app.services.rag_service import RAGService
-from app.routers import rag, agent, data, auth, watchlist, preference
 from app.services.memory_service import MemoryService
 from app.services.agent_service import AgentService
 from app.routers import rag, agent, data
-import app.state as state          # ← 导入状态容器
+from app.routers import auth, watchlist, preference, analysis
+from app.models.database import Base, engine
+import app.state as state
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("\n🚀 理财AI分析师启动中...")
 
-    # 初始化服务，存入 state
+    # 初始化数据库
+    Base.metadata.create_all(bind=engine)
+    print("✅ 数据库初始化完成")
+
+    # 初始化服务
     state.rag_service = RAGService()
     state.memory_service = MemoryService()
     state.agent_service = AgentService(state.memory_service)
@@ -34,9 +36,6 @@ async def lifespan(app: FastAPI):
         DEFAULT_WATCH_LIST,
         state.rag_service.embeddings
     )
-
-    Base.metadata.create_all(bind=engine)
-    print("✅ 数据库初始化完成")
 
     print("\n✅ 服务启动完成！")
     print("   API文档：http://localhost:8001/docs\n")
@@ -49,7 +48,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="理财AI分析师",
     description="RAG + Agent + 长期记忆 完整投资分析服务",
-    version="3.0.0",
+    version="4.0.0",
     lifespan=lifespan
 )
 
@@ -59,12 +58,13 @@ app.include_router(data.router)
 app.include_router(auth.router)
 app.include_router(watchlist.router)
 app.include_router(preference.router)
+app.include_router(analysis.router)
 
 
 @app.get("/")
 async def root():
     return {
-        "service": "理财AI分析师 v3.0",
+        "service": "理财AI分析师 v4.0",
         "status": "running",
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "docs": "http://localhost:8001/docs"
