@@ -9,6 +9,7 @@ import uvicorn
 
 from app.routers import rag, agent, data, auth  
 from app.models.database import Base, engine    
+from app.routers import rag, agent, data, auth, watchlist
 from app.config import DEFAULT_WATCH_LIST
 from app.services.rag_service import RAGService
 from app.services.memory_service import MemoryService
@@ -55,6 +56,7 @@ app.include_router(rag.router)
 app.include_router(agent.router)
 app.include_router(data.router)
 app.include_router(auth.router)
+app.include_router(watchlist.router)
 
 
 @app.get("/")
