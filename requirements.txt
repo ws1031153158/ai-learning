@@ -16,3 +16,10 @@ crewai
 crewai-tools
 mem0ai
 pydantic
+requests
+sqlalchemy
+pymysql
+cryptography
+bcrypt
+pyjwt
+python-multipart

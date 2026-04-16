@@ -31,3 +31,11 @@ os.environ["OPENAI_MODEL_NAME"] = DEEPSEEK_MODEL
 os.makedirs("./data", exist_ok=True)
 os.makedirs(RAG_DB_PATH, exist_ok=True)
 os.makedirs(MEMORY_DB_PATH, exist_ok=True)
+
+# ── 数据库 ────────────────────────────────────────────
+DB_URL = "mysql+pymysql://financeai:financeai123456@localhost:3306/financeai"
+
+# ── JWT ───────────────────────────────────────────────
+JWT_SECRET = "chanceforgao19991010"   # ← 改成随机字符串
+JWT_EXPIRE_DAYS = 7                           # Token 有效期7天
+JWT_EXPIRE_DAYS_LONG = 30                     # 保持登录30天

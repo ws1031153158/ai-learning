@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import uvicorn
 
+from app.routers import rag, agent, data, auth  
+from app.models.database import Base, engine    
 from app.config import DEFAULT_WATCH_LIST
 from app.services.rag_service import RAGService
 from app.services.memory_service import MemoryService
@@ -17,7 +19,6 @@ import app.state as state          # ← 导入状态容器
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-
     print("\n🚀 理财AI分析师启动中...")
 
     # 初始化服务，存入 state
@@ -31,6 +32,9 @@ async def lifespan(app: FastAPI):
         DEFAULT_WATCH_LIST,
         state.rag_service.embeddings
     )
+
+    Base.metadata.create_all(bind=engine)
+    print("✅ 数据库初始化完成")
 
     print("\n✅ 服务启动完成！")
     print("   API文档：http://localhost:8001/docs\n")
@@ -50,6 +54,7 @@ app = FastAPI(
 app.include_router(rag.router)
 app.include_router(agent.router)
 app.include_router(data.router)
+app.include_router(auth.router)
 
 
 @app.get("/")
