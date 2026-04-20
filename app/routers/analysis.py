@@ -103,7 +103,7 @@ async def daily_report(
     authorization: str = Header(None),
     db: Session = Depends(get_db)
 ):
-    """日报：大盘行情 + 自选股走势 + 市场情绪"""
+    """日报：大盘行情 + 自选股走势 + 市场情绪 + 新闻要点"""
     try:
         user_id = get_current_user_id(authorization, db)
     except ValueError as e:
@@ -198,6 +198,9 @@ async def daily_report(
         sentiment = "未知"
         sentiment_desc = "暂无数据"
 
+    # ← 新增：财经新闻
+    news = fetch_news(10)
+
     return {
         "success": True,
         "data": {
@@ -207,7 +210,8 @@ async def daily_report(
             "sentiment": {
                 "level": sentiment,
                 "desc": sentiment_desc
-            }
+            },
+            "news": news
         }
     }
 
@@ -289,6 +293,36 @@ async def analyze_bond(
         "report": f"## 债券 {req.bond_code} 分析\n\n功能开发中，敬请期待。"
     }
 
+def fetch_news(count: int = 10) -> list:
+    """获取财经新闻（新浪财经）"""
+    try:
+        url = "https://feed.mix.sina.com.cn/api/roll/get"
+        params = {
+            "pageid": 153,
+            "lid": 2516,
+            "k": "",
+            "num": count,
+            "page": 1
+        }
+        headers = {
+            "Referer": "https://finance.sina.com.cn",
+            "User-Agent": "Mozilla/5.0"
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        data = resp.json()
+
+        news_list = []
+        items = data.get("result", {}).get("data", [])
+        for item in items:
+            news_list.append({
+                "title": item.get("title", ""),
+                "time": item.get("ctime", ""),
+                "source": item.get("media_name", "新浪财经")
+            })
+        return news_list
+    except Exception as e:
+        print(f"新闻获取失败：{e}")
+        return []
 
 @router.post("/position")
 async def analyze_position(
