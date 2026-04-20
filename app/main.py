@@ -12,7 +12,7 @@ from app.services.rag_service import RAGService
 from app.services.memory_service import MemoryService
 from app.services.agent_service import AgentService
 from app.routers import rag, agent, data
-from app.routers import auth, watchlist, preference, analysis
+from app.routers import auth, watchlist, preference, analysis, user
 from app.models.database import Base, engine
 import app.state as state
 
@@ -59,6 +59,7 @@ app.include_router(auth.router)
 app.include_router(watchlist.router)
 app.include_router(preference.router)
 app.include_router(analysis.router)
+app.include_router(user.router)
 
 
 @app.get("/")
