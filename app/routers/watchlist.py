@@ -86,20 +86,24 @@ def fetch_kline(
             resp.encoding = "gbk"
             text = resp.text
 
+            # 跳过前面的注释，取最后一行
+            lines = text.strip().split("\n")
+            jsonp_line = lines[-1]
+
             # 解析 jsonp
-            start_idx = text.index("(") + 1
-            end_idx = text.rindex(")")
-            data = json.loads(text[start_idx:end_idx])
+            start_idx = jsonp_line.index("(") + 1
+            end_idx = jsonp_line.rindex(")")
+            data = json.loads(jsonp_line[start_idx:end_idx])
 
             klines = []
             for item in data[-data_range:]:
                 klines.append({
-                    "date": item.get("d", ""),
-                    "open": float(item.get("o", 0)),
-                    "high": float(item.get("h", 0)),
-                    "low": float(item.get("l", 0)),
-                    "close": float(item.get("c", 0)),
-                    "volume": float(item.get("v", 0))
+                    "date": item.get("day", ""),
+                    "open": float(item.get("open", 0)),
+                    "high": float(item.get("high", 0)),
+                    "low": float(item.get("low", 0)),
+                    "close": float(item.get("close", 0)),
+                    "volume": float(item.get("volume", 0))
                 })
             return klines
 
