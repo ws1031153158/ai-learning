@@ -68,7 +68,7 @@ def fetch_kline(
                 datetime.now() - timedelta(days=data_range + 10)
             ).strftime("%Y%m%d")
 
-            url = "https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_sh600519_daily/CN_MarketDataService.getKLineData"
+            url = f"https://quotes.sina.cn/cn/api/jsonp_v2.php/var%20_{symbol}_daily/CN_MarketDataService.getKLineData"
             params = {
                 "symbol": symbol,
                 "scale": 240,
