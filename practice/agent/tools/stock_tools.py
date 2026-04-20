@@ -277,3 +277,179 @@ def calculate_position(
     }
 
     return json.dumps(result, ensure_ascii=False)
+
+# ── 基金数据 ──────────────────────────────────────────
+
+def get_fund_info(fund_code: str) -> str:
+    """获取基金基本信息和净值"""
+    try:
+        url = "http://fundgz.1234567.com.cn/js/{}.js".format(fund_code)
+        headers = {
+            "Referer": "http://fund.eastmoney.com",
+            "User-Agent": "Mozilla/5.0"
+        }
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        text = resp.text
+
+        # 解析 jsonp
+        start = text.index("(") + 1
+        end = text.rindex(")")
+        data = json.loads(text[start:end])
+
+        result = {
+            "fund_code": fund_code,
+            "name": data.get("name", ""),
+            "nav": data.get("dwjz", ""),           # 单位净值
+            "nav_date": data.get("jzrq", ""),       # 净值日期
+            "estimated_nav": data.get("gsz", ""),   # 估算净值
+            "estimated_change": data.get("gszzl", ""),  # 估算涨跌幅
+            "fund_type": data.get("fundtype", "")
+        }
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return f"获取基金信息失败：{e}"
+
+
+def get_fund_performance(fund_code: str) -> str:
+    """获取基金历史业绩"""
+    try:
+        url = "https://api.fund.eastmoney.com/f10/lsjz"
+        params = {
+            "fundCode": fund_code,
+            "pageIndex": 1,
+            "pageSize": 10,
+            "startDate": "",
+            "endDate": ""
+        }
+        headers = {
+            "Referer": "http://fund.eastmoney.com",
+            "User-Agent": "Mozilla/5.0"
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        data = resp.json()
+
+        items = data.get("Data", {}).get("LSJZList", [])
+        if not items:
+            return f"暂无 {fund_code} 历史净值数据"
+
+        result = []
+        for item in items[:10]:
+            result.append({
+                "date": item.get("FSRQ", ""),
+                "nav": item.get("DWJZ", ""),
+                "acc_nav": item.get("LJJZ", ""),
+                "change_pct": item.get("JZZZL", "")
+            })
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return f"获取基金业绩失败：{e}"
+
+
+def get_fund_manager(fund_code: str) -> str:
+    """获取基金经理信息"""
+    try:
+        url = f"https://api.fund.eastmoney.com/f10/jjjl/{fund_code}"
+        params = {"fundcode": fund_code}
+        headers = {
+            "Referer": "http://fund.eastmoney.com",
+            "User-Agent": "Mozilla/5.0"
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        data = resp.json()
+
+        managers = data.get("Data", {}).get("currentManager", [])
+        if not managers:
+            return f"暂无 {fund_code} 基金经理数据"
+
+        result = []
+        for m in managers:
+            result.append({
+                "name": m.get("name", ""),
+                "start_date": m.get("startDate", ""),
+                "manage_days": m.get("days", ""),
+                "total_return": m.get("profit", "")
+            })
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return f"获取基金经理失败：{e}"
+
+
+# ── 债券数据 ──────────────────────────────────────────
+
+def get_bond_info(bond_code: str) -> str:
+    """获取债券基本信息和价格"""
+    try:
+        # 债券代码前缀判断
+        if bond_code.startswith("1"):
+            symbol = f"sh{bond_code}"
+        else:
+            symbol = f"sz{bond_code}"
+
+        url = f"http://hq.sinajs.cn/list={symbol}"
+        headers = {
+            "Referer": "https://finance.sina.com.cn",
+            "User-Agent": "Mozilla/5.0"
+        }
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.encoding = "gbk"
+        text = resp.text
+
+        data_str = text.split('"')[1]
+        fields = data_str.split(",")
+        if len(fields) < 10:
+            return f"暂无 {bond_code} 债券数据"
+
+        price = float(fields[3]) if fields[3] else 0
+        prev_close = float(fields[2]) if fields[2] else 0
+        change_pct = round(
+            (price - prev_close) / prev_close * 100, 2
+        ) if prev_close > 0 else 0
+
+        result = {
+            "bond_code": bond_code,
+            "name": fields[0],
+            "price": price,
+            "prev_close": prev_close,
+            "change_pct": change_pct,
+            "high": float(fields[4]) if fields[4] else 0,
+            "low": float(fields[5]) if fields[5] else 0,
+            "volume": float(fields[8]) if fields[8] else 0,
+        }
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return f"获取债券信息失败：{e}"
+
+
+def get_bond_detail(bond_code: str) -> str:
+    """获取债券详细信息（票面利率、到期日等）"""
+    try:
+        if bond_code.startswith("1"):
+            market = "SH"
+        else:
+            market = "SZ"
+
+        url = "https://push2.eastmoney.com/api/qt/stock/get"
+        params = {
+            "secid": f"{'1' if market == 'SH' else '0'}.{bond_code}",
+            "fields": "f57,f58,f84,f85,f107,f116,f117,f162,f163,f164",
+            "ut": "b2884a393a59ad64002292a3e90d46a5"
+        }
+        headers = {
+            "Referer": "https://data.eastmoney.com",
+            "User-Agent": "Mozilla/5.0"
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        data = resp.json()
+
+        d = data.get("data", {})
+        result = {
+            "bond_code": bond_code,
+            "name": d.get("f58", ""),
+            "pe": d.get("f162", ""),       # 溢价率
+            "conv_price": d.get("f163", ""),  # 转股价
+            "conv_value": d.get("f164", ""),  # 转股价值
+        }
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        return f"获取债券详情失败：{e}"

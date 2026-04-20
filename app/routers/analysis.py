@@ -259,7 +259,6 @@ async def analyze_fund(
     authorization: str = Header(None),
     db: Session = Depends(get_db)
 ):
-    """基金分析（框架）"""
     try:
         user_id = get_current_user_id(authorization, db)
     except ValueError as e:
@@ -268,10 +267,24 @@ async def analyze_fund(
             content={"success": False, "message": str(e)}
         )
 
-    return {
-        "success": True,
-        "report": f"## 基金 {req.fund_code} 分析\n\n功能开发中，敬请期待。"
-    }
+    pref = db.query(UserPreference).filter(
+        UserPreference.user_id == user_id
+    ).first()
+    total_assets = req.total_assets or (
+        pref.total_assets if pref else None
+    )
+
+    try:
+        report = await state.agent_service.analyze_fund_async(
+            fund_code=req.fund_code,
+            total_assets=total_assets
+        )
+        return {"success": True, "report": report}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)}
+        )
 
 
 @router.post("/bond")
@@ -280,7 +293,6 @@ async def analyze_bond(
     authorization: str = Header(None),
     db: Session = Depends(get_db)
 ):
-    """债券分析（框架）"""
     try:
         user_id = get_current_user_id(authorization, db)
     except ValueError as e:
@@ -289,10 +301,50 @@ async def analyze_bond(
             content={"success": False, "message": str(e)}
         )
 
-    return {
-        "success": True,
-        "report": f"## 债券 {req.bond_code} 分析\n\n功能开发中，敬请期待。"
-    }
+    pref = db.query(UserPreference).filter(
+        UserPreference.user_id == user_id
+    ).first()
+    total_assets = req.total_assets or (
+        pref.total_assets if pref else None
+    )
+
+    try:
+        report = await state.agent_service.analyze_bond_async(
+            bond_code=req.bond_code,
+            total_assets=total_assets
+        )
+        return {"success": True, "report": report}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)}
+        )
+
+
+@router.post("/position")
+async def analyze_position(
+    req: PositionAnalysisRequest,
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    try:
+        user_id = get_current_user_id(authorization, db)
+    except ValueError as e:
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "message": str(e)}
+        )
+
+    try:
+        report = await state.agent_service.analyze_position_async(
+            positions_text=req.positions_text
+        )
+        return {"success": True, "report": report}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)}
+        )
 
 def fetch_news_raw(count: int = 50) -> list:
     """获取原始新闻"""

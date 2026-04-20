@@ -15,7 +15,12 @@ from practice.agent.tools.stock_tools import (
     get_stock_news,
     get_fund_flow,
     get_financial_indicator,
-    calculate_position
+    calculate_position,
+    get_fund_info,
+    get_fund_performance,
+    get_fund_manager,
+    get_bond_info,
+    get_bond_detail
 )
 from app.config import *
 from app.services.memory_service import MemoryService
@@ -215,13 +220,14 @@ class AgentService:
         self.memory_service = memory_service
         print("✅ Agent服务初始化完成")
 
+    # ── Function Calling 循环 ─────────────────────────
+
     def _run_fc_loop(
         self,
         messages: list,
         session_id: str,
         user_input: str
     ) -> str:
-        """Function Calling 循环"""
         for _ in range(5):
             response = self.client.chat.completions.create(
                 model=DEEPSEEK_MODEL,
@@ -232,7 +238,6 @@ class AgentService:
             message = response.choices[0].message
 
             if not message.tool_calls:
-                # 保存到会话历史
                 self.session_manager.add_message(
                     session_id,
                     {"role": "user", "content": user_input}
@@ -244,7 +249,6 @@ class AgentService:
                         "content": message.content
                     }
                 )
-                # 保存到长期记忆
                 self.memory_service.save(
                     messages=[
                         {"role": "user", "content": user_input},
@@ -257,7 +261,6 @@ class AgentService:
                 )
                 return message.content
 
-            # 处理工具调用
             tool_calls_data = [
                 {
                     "id": tc.id,
@@ -294,9 +297,9 @@ class AgentService:
 
         return "处理超时，请重试"
 
+    # ── 对话 ──────────────────────────────────────────
+
     def chat(self, session_id: str, user_input: str) -> str:
-        """带记忆的对话"""
-        # 搜索长期记忆
         memories = self.memory_service.search(
             user_input, session_id
         )
@@ -316,24 +319,23 @@ class AgentService:
 
         return self._run_fc_loop(messages, session_id, user_input)
 
+    # ── 个股分析（CrewAI） ────────────────────────────
+
     def _run_crew(
         self,
         stock_code: str,
         total_assets: float = None
     ) -> str:
-        """CrewAI 多Agent分析"""
-        # ── 禁用 crewai 交互提示 ──────────────────────
         import os
         from crewai import LLM
         os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
         os.environ["OTEL_SDK_DISABLED"] = "true"
 
         sllm = LLM(
-        model="openai/deepseek-chat",
-        api_key=DEEPSEEK_API_KEY,
-        base_url=DEEPSEEK_BASE_URL
+            model="openai/deepseek-chat",
+            api_key=DEEPSEEK_API_KEY,
+            base_url=DEEPSEEK_BASE_URL
         )
-
 
         data_collector = Agent(
             role="股票数据收集师",
@@ -341,7 +343,7 @@ class AgentService:
             backstory="专业金融数据分析师。",
             tools=[tool_get_price, tool_get_news, tool_get_fund_flow],
             verbose=False,
-            allow_delegation=False, 
+            allow_delegation=False,
             max_iter=3,
             llm=sllm
         )
@@ -446,6 +448,132 @@ class AgentService:
             print(traceback.format_exc())
             raise
 
+    # ── 基金分析 ──────────────────────────────────────
+
+    def _run_fund_analysis(
+        self,
+        fund_code: str,
+        total_assets: float = None
+    ) -> str:
+        info = get_fund_info(fund_code)
+        performance = get_fund_performance(fund_code)
+        manager = get_fund_manager(fund_code)
+
+        assets_info = (
+            f"用户总资产：{total_assets}元"
+            if total_assets else "未提供资产信息"
+        )
+
+        prompt = f"""你是专业基金分析师，请对以下基金进行全面分析。
+
+基金代码：{fund_code}
+{assets_info}
+
+基金基本信息：
+{info}
+
+历史净值（近10日）：
+{performance}
+
+基金经理：
+{manager}
+
+请输出完整分析报告，格式：
+## 📊 基金基本信息
+## 📈 业绩表现分析
+## 👤 基金经理评价
+## ⚠️ 风险提示
+## 💡 投资建议
+{"## 💰 仓位建议" if total_assets else ""}
+## 📝 免责声明"""
+
+        response = self.client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=3000
+        )
+        return response.choices[0].message.content
+
+    # ── 债券分析 ──────────────────────────────────────
+
+    def _run_bond_analysis(
+        self,
+        bond_code: str,
+        total_assets: float = None
+    ) -> str:
+        info = get_bond_info(bond_code)
+        detail = get_bond_detail(bond_code)
+        news = get_stock_news(bond_code, limit=3)
+
+        assets_info = (
+            f"用户总资产：{total_assets}元"
+            if total_assets else "未提供资产信息"
+        )
+
+        prompt = f"""你是专业债券分析师，请对以下债券进行全面分析。
+
+债券代码：{bond_code}
+{assets_info}
+
+债券行情：
+{info}
+
+债券详情（转股价、溢价率等）：
+{detail}
+
+相关新闻：
+{news}
+
+请输出完整分析报告，格式：
+## 📊 债券基本信息
+## 💹 价格与溢价分析
+## 🔄 转股价值分析（如为可转债）
+## ⚠️ 风险提示
+## 💡 投资建议
+{"## 💰 仓位建议" if total_assets else ""}
+## 📝 免责声明"""
+
+        response = self.client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=3000
+        )
+        return response.choices[0].message.content
+
+    # ── 持仓分析 ──────────────────────────────────────
+
+    def _run_position_analysis(
+        self,
+        positions_text: str
+    ) -> str:
+        prompt = f"""你是专业投资组合分析师，请对以下持仓进行全面分析。
+
+持仓信息：
+{positions_text}
+
+今天是{datetime.now().strftime("%Y年%m月%d日")}。
+
+请输出完整持仓分析报告，格式：
+## 📊 持仓概览
+## 🏗️ 持仓结构分析（行业/板块分布）
+## ⚖️ 集中度风险评估
+## 📈 各持仓简要点评
+## 🔄 调仓建议
+## ⚠️ 整体风险提示
+## 📝 免责声明"""
+
+        response = self.client.chat.completions.create(
+            model=DEEPSEEK_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=4000
+        )
+        return response.choices[0].message.content
+
+    # ── Async 封装 ────────────────────────────────────
+
     async def chat_async(
         self,
         session_id: str,
@@ -468,4 +596,45 @@ class AgentService:
         return await loop.run_in_executor(
             None,
             functools.partial(self._run_crew, stock_code, total_assets)
+        )
+
+    async def analyze_fund_async(
+        self,
+        fund_code: str,
+        total_assets: float = None
+    ) -> str:
+        loop = asyncio.get_event_loop()
+        import functools
+        return await loop.run_in_executor(
+            None,
+            functools.partial(
+                self._run_fund_analysis, fund_code, total_assets
+            )
+        )
+
+    async def analyze_bond_async(
+        self,
+        bond_code: str,
+        total_assets: float = None
+    ) -> str:
+        loop = asyncio.get_event_loop()
+        import functools
+        return await loop.run_in_executor(
+            None,
+            functools.partial(
+                self._run_bond_analysis, bond_code, total_assets
+            )
+        )
+
+    async def analyze_position_async(
+        self,
+        positions_text: str
+    ) -> str:
+        loop = asyncio.get_event_loop()
+        import functools
+        return await loop.run_in_executor(
+            None,
+            functools.partial(
+                self._run_position_analysis, positions_text
+            )
         )
