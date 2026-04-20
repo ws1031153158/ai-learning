@@ -199,7 +199,8 @@ async def daily_report(
         sentiment_desc = "暂无数据"
 
     # ← 新增：财经新闻
-    news = fetch_news(10)
+    news_raw = fetch_news_raw(50)
+    news = await filter_news_by_value(news_raw)
 
     return {
         "success": True,
@@ -293,36 +294,107 @@ async def analyze_bond(
         "report": f"## 债券 {req.bond_code} 分析\n\n功能开发中，敬请期待。"
     }
 
-def fetch_news(count: int = 10) -> list:
-    """获取财经新闻（新浪财经）"""
+def fetch_news_raw(count: int = 50) -> list:
+    """获取原始新闻"""
     try:
-        url = "https://feed.mix.sina.com.cn/api/roll/get"
-        params = {
-            "pageid": 153,
-            "lid": 2516,
-            "k": "",
-            "num": count,
-            "page": 1
-        }
+        url = "http://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_50_1_.html"
         headers = {
-            "Referer": "https://finance.sina.com.cn",
+            "Referer": "http://www.eastmoney.com",
             "User-Agent": "Mozilla/5.0"
         }
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        data = resp.json()
+        resp = requests.get(url, headers=headers, timeout=10)
+        text = resp.text.replace("var ajaxResult=", "")
+        data = json.loads(text)
 
         news_list = []
-        items = data.get("result", {}).get("data", [])
+        items = data.get("LivesList", [])[:count]
         for item in items:
             news_list.append({
                 "title": item.get("title", ""),
-                "time": item.get("ctime", ""),
-                "source": item.get("media_name", "新浪财经")
+                "time": item.get("showtime", ""),
+                "url": item.get("url_w", "")
             })
         return news_list
     except Exception as e:
         print(f"新闻获取失败：{e}")
         return []
+
+
+async def filter_news_by_value(news_list: list) -> list:
+    """用 DeepSeek 筛选投资价值最高的新闻"""
+    if not news_list:
+        return []
+
+    try:
+        # 构建标题列表
+        titles_text = "\n".join([
+            f"{i+1}. [{item['time']}] {item['title']}"
+            for i, item in enumerate(news_list)
+        ])
+
+        prompt = f"""你是一位专业的价值投资分析师。
+以下是今日财经新闻列表，请从投资价值角度筛选出最值得关注的10条新闻。
+
+评判标准：
+1. 对A股市场有重大影响（政策、宏观经济、行业变化）
+2. 涉及上市公司重大事件（业绩、并购、重组）
+3. 对价值投资者有参考意义
+4. 排除无实质内容的公告和无关新闻
+
+新闻列表：
+{titles_text}
+
+请返回JSON格式，只返回JSON不要其他内容：
+{{
+  "selected": [
+    {{
+      "index": 原序号(1开始),
+      "reason": "一句话说明投资价值"
+    }}
+  ]
+}}"""
+
+        from openai import AsyncOpenAI
+        from app.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL
+
+        client = AsyncOpenAI(
+            api_key=DEEPSEEK_API_KEY,
+            base_url=DEEPSEEK_BASE_URL
+        )
+
+        response = await client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=1000
+        )
+
+        result_text = response.choices[0].message.content.strip()
+
+        # 清理 markdown 代码块
+        if "```json" in result_text:
+            result_text = result_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in result_text:
+            result_text = result_text.split("```")[1].split("```")[0].strip()
+
+        result = json.loads(result_text)
+        selected = result.get("selected", [])
+
+        # 组合结果
+        filtered = []
+        for item in selected[:10]:
+            idx = item.get("index", 0) - 1
+            if 0 <= idx < len(news_list):
+                news = news_list[idx].copy()
+                news["reason"] = item.get("reason", "")
+                filtered.append(news)
+
+        return filtered
+
+    except Exception as e:
+        print(f"AI筛选新闻失败：{e}")
+        # 降级：直接返回前10条
+        return news_list[:10]
 
 @router.post("/position")
 async def analyze_position(
